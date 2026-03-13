@@ -92,7 +92,7 @@ const channelFlavor = (seed: string) => {
   return flavors[value % flavors.length];
 };
 
-const laneAccent = (index: number) =>
+const laneAccent = (index: number) => 
   [
     'from-cyan-500/18 via-transparent to-transparent',
     'from-violet-500/18 via-transparent to-transparent',
