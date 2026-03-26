@@ -9,6 +9,12 @@ import Confessions from './pages/Confessions';
 import Polls from './pages/Polls';
 import VoiceRooms from './pages/VoiceRooms';
 import Shoutouts from './pages/Shoutouts';
+import QnA from './pages/QnA';
+import AdminModeration from './pages/AdminModeration';
+import ChatCenter from './pages/ChatCenter';
+import DebateArena from './pages/DebateArena';
+import DebateThread from './pages/DebateThread';
+import Whisper from './pages/Whisper';
 
 
 const Spinner = () => (
@@ -29,12 +35,30 @@ const PublicRoute = ({ children }: { children: React.ReactNode }) => {
   return !user ? <>{children}</> : <Navigate to="/dashboard" replace />;
 };
 
+const GlobalVoice = () => {
+  const { user, loading } = useAuth();
+  if (loading || !user) return null;
+  return <VoiceRooms />;
+};
+
+import { Toaster } from 'sonner';
+import { NotificationProvider } from './hooks/useNotifications';
+import { SystemConfigProvider } from './hooks/useSystemConfig';
+import SafeModeBanner from './components/SafeModeBanner';
+import GlobalAnnouncement from './components/GlobalAnnouncement';
+
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <AnimatedBackground />
-        <div className="relative" style={{ zIndex: 1 }}>
+      <SystemConfigProvider>
+        <NotificationProvider>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AnimatedBackground />
+          <Toaster position="top-right" richColors />
+          <SafeModeBanner />
+          <GlobalAnnouncement />
+          <div className="relative" style={{ zIndex: 1 }}>
+          <GlobalVoice />
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/join" element={<PublicRoute><Join /></PublicRoute>} />
@@ -42,14 +66,22 @@ function App() {
             <Route path="/room/:id" element={<ProtectedRoute><ChatRoom /></ProtectedRoute>} />
             <Route path="/confessions" element={<ProtectedRoute><Confessions /></ProtectedRoute>} />
             <Route path="/polls" element={<ProtectedRoute><Polls /></ProtectedRoute>} />
-            <Route path="/voice" element={<ProtectedRoute><VoiceRooms /></ProtectedRoute>} />
+            <Route path="/qna" element={<ProtectedRoute><QnA /></ProtectedRoute>} />
+            <Route path="/voice" element={<ProtectedRoute><div className="h-0 overflow-hidden" /></ProtectedRoute>} />
             <Route path="/shoutouts" element={<ProtectedRoute><Shoutouts /></ProtectedRoute>} />
+            <Route path="/chat-center" element={<ProtectedRoute><ChatCenter /></ProtectedRoute>} />
+            <Route path="/debate-arena" element={<ProtectedRoute><DebateArena /></ProtectedRoute>} />
+            <Route path="/debate-arena/:id" element={<ProtectedRoute><DebateThread /></ProtectedRoute>} />
+            <Route path="/whisper/*" element={<ProtectedRoute><Whisper /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><AdminModeration /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
-      </BrowserRouter>
-    </AuthProvider>
-  );
+        </BrowserRouter>
+      </NotificationProvider>
+     </SystemConfigProvider>
+   </AuthProvider>
+);
 }
 
 export default App;

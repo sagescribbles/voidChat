@@ -1,0 +1,181 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserRole() {
+      return request.auth.token.role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+
+    function isModerator() {
+      return isAuthenticated() && (getUserRole() == 'moderator' || getUserRole() == 'admin');
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isNotExpired() {
+      return !('expires_at' in resource.data) || resource.data.expires_at > request.time;
+    }
+
+    function isSafeModeActive() {
+      return get(/databases/$(database)/documents/system_config/global).data.safeMode == true;
+    }
+    
+    function canCreateContent() {
+      return isAuthenticated() && (!isSafeModeActive() || isModerator());
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated(); 
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    // Chat Rooms
+    match /chat_rooms/{roomId} {
+      allow read: if isAuthenticated() && isNotExpired();
+      allow create: if canCreateContent();
+      allow update: if canCreateContent() && (isOwner(resource.data.created_by) || isModerator());
+      allow delete: if isModerator() || (isAuthenticated() && resource.data.created_by == request.auth.uid);
+    }
+
+    // Room Members
+    match /room_members/{memberId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateContent();
+      allow update, delete: if isModerator() || (isAuthenticated() && resource.data.user_id == request.auth.uid);
+    }
+
+    // Messages
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && isNotExpired();
+      allow create: if canCreateContent() && request.resource.data.user_id == request.auth.uid;
+      allow delete: if isModerator() || (isAuthenticated() && resource.data.user_id == request.auth.uid);
+    }
+
+    // Confessions
+    match /confessions/{confessionId} {
+      allow read: if isAuthenticated() && isNotExpired();
+      allow create: if canCreateContent() && request.resource.data.user_id == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']);
+      allow delete: if isModerator() || (isAuthenticated() && resource.data.user_id == request.auth.uid);
+    }
+
+    // Shoutouts
+    match /shoutouts/{shoutoutId} {
+      allow read: if isAuthenticated() && isNotExpired();
+      allow create: if canCreateContent() && request.resource.data.user_id == request.auth.uid;
+      allow delete: if isModerator() || (isAuthenticated() && resource.data.user_id == request.auth.uid);
+    }
+
+    // Reports
+    match /reports/{reportId} {
+      allow read: if isModerator();
+      allow create: if isAuthenticated() && request.resource.data.reporter_id == request.auth.uid;
+      allow update, delete: if isModerator();
+    }
+    
+    // Whisper Features
+    match /whisper_stories/{storyId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateContent() && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAdmin() || (isAuthenticated() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasAny(['likes', 'followers', 'episodes']));
+      allow delete: if isAdmin() || isModerator() || (isAuthenticated() && resource.data.authorId == request.auth.uid);
+    }
+    match /whisper_story_parts/{partId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateContent();
+      allow update: if isAdmin() || (isAuthenticated() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions', 'votes']));
+      allow delete: if isAdmin() || isModerator();
+    }
+    match /whisper_theories/{theoryId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateContent() && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['upvotes']);
+      allow delete: if isModerator() || (isAuthenticated() && resource.data.authorId == request.auth.uid);
+    }
+    match /whisper_situations/{situationId} {
+      allow read: if isAuthenticated();
+      allow create: if isModerator() || isAdmin(); 
+    }
+    match /whisper_situation_responses/{responseId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateContent() && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasAny(['agrees', 'upvotes']);
+      allow delete: if isModerator() || (isAuthenticated() && resource.data.authorId == request.auth.uid);
+    }
+    // Whisper Theory Comments
+    match /whisper_theory_comments/{commentId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateContent() && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']);
+      allow delete: if isModerator() || (isAuthenticated() && resource.data.authorId == request.auth.uid);
+    }
+    // Whisper Story Part Comments
+    match /whisper_story_comments/{commentId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateContent() && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAdmin() || (isAuthenticated() && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']));
+      allow delete: if isAdmin() || isModerator() || (isAuthenticated() && resource.data.authorId == request.auth.uid);
+    }
+    
+    // Whisper Story Likes
+    match /whisper_story_likes/{likeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+    // Whisper Story Branching Votes (one per user per part)
+    match /whisper_branch_votes/{voteId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if (isAuthenticated() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Whisper Story Follows
+    match /whisper_story_follows/{followId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+    
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+    }
+    
+    // System Config
+    match /system_config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Default catch-all - Deny by default, only allow explicit rules above
+    match /{document=**} {
+      allow read: if isAuthenticated() && isAdmin();
+      allow write: if isAdmin(); 
+    }
+  }
+}
