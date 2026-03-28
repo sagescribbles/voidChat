@@ -29,8 +29,9 @@ router.post('/login', async (req: Request, res: Response) => {
     res.cookie('session', sessionCookie, options);
     console.info(`[AuthSuccess] Login for User: ${decodedToken.uid} from IP: ${ip}`);
     res.status(200).json({ status: 'success' });
-  } catch (error: any) {
-    console.warn(`[AuthFailure] Login failed from IP: ${ip}. Error: ${error.message}`);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.warn(`[AuthFailure] Login failed from IP: ${ip}. Error: ${errorMessage}`);
     res.status(401).send('Unauthorized');
   }
 });
@@ -78,9 +79,10 @@ router.post('/signup', async (req: Request, res: Response) => {
 
     console.info(`[AuthSuccess] Signup for User: ${userRecord.uid} (${sanitizedReal}) from IP: ${ip}`);
     res.status(201).json({ status: 'success', uid: userRecord.uid });
-  } catch (error: any) {
-    console.warn(`[AuthFailure] Signup failed from IP: ${ip}. Error: ${error.message}`);
-    res.status(400).json({ error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.warn(`[AuthFailure] Signup failed from IP: ${ip}. Error: ${errorMessage}`);
+    res.status(400).json({ error: 'Signup failed' });
   }
 });
 

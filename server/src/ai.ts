@@ -21,8 +21,10 @@ router.post('/generate', verifySession, async (req: Request, res: Response) => {
       status: 'success',
       received: sanitizedPrompt.substring(0, 50) + '...'
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[AIFailure] Generation failed. Error: ${errorMessage}`);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
