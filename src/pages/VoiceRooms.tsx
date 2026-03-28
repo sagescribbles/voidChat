@@ -351,7 +351,7 @@ export default function VoiceRooms() {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         const outRef = ref(rtdb, `signaling/${room.id}/${remoteUserId}`);
-        push(outRef, { from: currentUser.uid, type: 'offer', data: { type: offer.type, sdp: offer.sdp } });
+        push(outRef, { from: currentUser.uid, type: 'offer', data: new RTCSessionDescription(offer).toJSON() });
         console.log(`[WebRTC] Offer sent to ${remoteUserId}`);
       } catch (err) {
         console.error('[WebRTC] Failed to create offer:', err);
@@ -508,7 +508,7 @@ export default function VoiceRooms() {
           await pc.setLocalDescription(answer);
           const outRef = ref(rtdb, `signaling/${roomId}/${from}`);
           // FIX: Serialize the answer
-          push(outRef, { from: user.uid, type: 'answer', data: { type: answer.type, sdp: answer.sdp } });
+          push(outRef, { from: user.uid, type: 'answer', data: new RTCSessionDescription(answer).toJSON() });
           
           // Process queued candidates
           const queued = pendingCandidatesRef.current.get(from) || [];
