@@ -337,18 +337,6 @@ export default function DebateArena() {
                   No active debates to spotlight
                 </div>
               )}
-              {trendingDebate && (
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setReportingDebate(trendingDebate.id);
-                  }}
-                  className="absolute bottom-6 right-8 z-20 flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-black tracking-widest uppercase text-amber-400 transition-all"
-                >
-                  <AlertTriangle size={12} />
-                  Report Debate
-                </button>
-              )}
             </div>
           </div>
 
@@ -399,7 +387,7 @@ export default function DebateArena() {
                           {debate.category}
                         </span>
                         <div className="flex items-center gap-2">
-                          {profile?.is_admin && (
+                          {(profile?.is_admin || debate.created_by === user?.uid) && (
                             <div className="flex items-center gap-1.5">
                               {debate.status !== 'closed' && (
                                 <button 

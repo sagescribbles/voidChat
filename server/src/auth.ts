@@ -1,6 +1,7 @@
 import { Request, Response, Router } from 'express';
 import * as admin from 'firebase-admin';
 import { validateString, sanitize, handleValidationError } from './validation';
+import { verifySession, checkRole } from './middleware';
 
 const router = Router();
 
@@ -23,7 +24,7 @@ router.post('/login', async (req: Request, res: Response) => {
       maxAge: expiresIn, 
       httpOnly: true, 
       secure: process.env.NODE_ENV === 'production', 
-      sameSite: 'strict' as const 
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' as const : 'lax' as const 
     };
 
     res.cookie('session', sessionCookie, options);
@@ -56,6 +57,20 @@ router.post('/signup', async (req: Request, res: Response) => {
     const sanitizedAnon = sanitize(anonymousUsername);
     const virtualEmail = `${sanitizedReal.toLowerCase().replace(/[^a-z0-9]/g, '')}@voidchat.internal`;
 
+    // 0. Check if names are taken in Firestore (Case-insensitive for real_username)
+    const db = admin.firestore();
+    const [anonCheck, realCheck] = await Promise.all([
+      db.collection('users').where('anonymous_username', '==', sanitizedAnon).limit(1).get(),
+      db.collection('users').where('real_username_lower', '==', sanitizedReal.toLowerCase()).limit(1).get()
+    ]);
+
+    if (!anonCheck.empty) {
+      return res.status(400).json({ error: 'Anonymous name taken. Try another!' });
+    }
+    if (!realCheck.empty) {
+      return res.status(400).json({ error: 'Username taken. Try another!' });
+    }
+
     // 1. Create User in Firebase Auth
     const userRecord = await admin.auth().createUser({
       email: virtualEmail,
@@ -63,23 +78,34 @@ router.post('/signup', async (req: Request, res: Response) => {
       displayName: sanitizedReal,
     });
 
-    // 2. Set Custom Claims (Default role: user)
-    await admin.auth().setCustomUserClaims(userRecord.uid, { role: 'user' });
-
-    // 3. Create Firestore profile (exclude password)
-    const db = admin.firestore();
-    await db.collection('users').doc(userRecord.uid).set({
-      id: userRecord.uid,
-      anonymous_username: sanitizedAnon,
-      real_username: sanitizedReal,
-      joined_at: admin.firestore.FieldValue.serverTimestamp(),
-      role: 'user'
-    });
+    // 2. Parallelize: Set Custom Claims, Firestore profile, and Create Custom Token (with embedded claims)
+    // This removes 2 sequential network roundtrips.
+    const [customToken] = await Promise.all([
+      admin.auth().createCustomToken(userRecord.uid, { role: 'user' }),
+      admin.auth().setCustomUserClaims(userRecord.uid, { role: 'user' }),
+      db.collection('users').doc(userRecord.uid).set({
+        id: userRecord.uid,
+        anonymous_username: sanitizedAnon,
+        real_username: sanitizedReal,
+        real_username_lower: sanitizedReal.toLowerCase(), // Store lowercase for fast case-insensitive checks
+        joined_at: admin.firestore.FieldValue.serverTimestamp(),
+        role: 'user'
+      })
+    ]);
 
     console.info(`[AuthSuccess] Signup for User: ${userRecord.uid} (${sanitizedReal}) from IP: ${ip}`);
-    res.status(201).json({ status: 'success', uid: userRecord.uid });
+    res.status(201).json({ status: 'success', uid: userRecord.uid, customToken });
   } catch (error: any) {
-    console.warn(`[AuthFailure] Signup failed from IP: ${ip}. Error: ${error.message}`);
+    console.warn(`[AuthFailure] Signup failed from IP: ${ip}. Error: ${error.message} (Code: ${error.code})`);
+    
+    // Comprehensive mapping for Firebase email/user errors
+    if (error.code === 'auth/email-already-exists' || 
+        error.code === 'auth/uid-already-exists' || 
+        error.message?.toLowerCase().includes('already in use') || 
+        error.message?.toLowerCase().includes('already exists')) {
+      return res.status(400).json({ error: 'Username taken. Try another!' });
+    }
+    
     res.status(400).json({ error: error.message });
   }
 });
@@ -97,6 +123,39 @@ router.get('/session', async (req: Request, res: Response) => {
     res.status(200).json(decodedClaims);
   } catch (error) {
     res.status(401).send('Unauthorized');
+  }
+});
+
+router.delete('/users/:uid', verifySession, checkRole(['admin']), async (req: Request, res: Response) => {
+  const uid = req.params.uid as string;
+  const ip = req.ip as string;
+
+  try {
+    // 1. Safety check & Auth cleanup (graceful)
+    try {
+      const targetUser = await admin.auth().getUser(uid);
+      if (targetUser.customClaims?.role === 'admin') {
+        return res.status(403).json({ error: 'Cannot delete administrative accounts via API.' });
+      }
+
+      // 2. Revoke Refresh Tokens (Force Logout)
+      await admin.auth().revokeRefreshTokens(uid);
+
+      // 3. Delete from Firebase Auth
+      await admin.auth().deleteUser(uid);
+    } catch (authErr: any) {
+      console.warn(`[AuthWarning] User ${uid} not found in Auth or already deleted. Proceeding with Firestore cleanup.`);
+    }
+
+    // 4. Delete from Firestore (The source of truth for the Admin list)
+    const db = admin.firestore();
+    await db.collection('users').doc(uid).delete();
+
+    console.info(`[AuthSuccess] Deep Delete for User: ${uid} by Admin: ${(req as any).user?.uid} from IP: ${ip}`);
+    res.status(200).json({ status: 'success', message: 'User fully purged and database record deleted.' });
+  } catch (error: any) {
+    console.error(`[AuthFailure] Deep Delete failed for User: ${uid}. Error: ${error.message}`);
+    res.status(500).json({ error: error.message });
   }
 });
 

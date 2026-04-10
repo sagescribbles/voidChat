@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Eye, EyeOff } from 'lucide-react';
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   updateProfile
 } from 'firebase/auth';
 import { 
@@ -21,20 +22,34 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 
 const api = {
   post: async (endpoint: string, data?: any) => {
-    const response = await fetch(`${apiBaseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: data ? JSON.stringify(data) : undefined,
-      credentials: 'include',
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s critical timeout
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `Request failed with status ${response.status}`);
-    }
+    try {
+      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: data ? JSON.stringify(data) : undefined,
+        credentials: 'include',
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || errorData.error || `Server returned error ${response.status}`);
+      }
 
-    const text = await response.text();
-    return text ? JSON.parse(text) : { status: 'success' };
+      const text = await response.text();
+      return text ? JSON.parse(text) : { status: 'success' };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        throw new Error("Server is taking too long to respond. It might be sleeping—please wait a few seconds and try clicking 'Create Account' again.");
+      }
+      throw err;
+    }
   }
 };
 
@@ -123,7 +138,16 @@ function AnimatedTitle({ text }: { text: string }) {
 
 export default function Join() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const m = params.get('mode');
+    if (m === 'signup' || m === 'login') {
+      setMode(m as 'login' | 'signup');
+    }
+  }, [location.search]);
   const [realUsername, setRealUsername] = useState('');
   const [anonymousUsername, setAnonymousUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -132,7 +156,20 @@ export default function Join() {
   const [showInviteCode, setShowInviteCode] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('');
   const [step, setStep] = useState<'form' | 'success'>('form');
+
+  // Handle server wakeup hint
+  useEffect(() => {
+    let timer: any;
+    if (loading) {
+      setLoadingText(mode === 'signup' ? 'Creating...' : 'Connecting...');
+      timer = setTimeout(() => {
+        setLoadingText("Waking up server...");
+      }, 3500); // Show hint if request takes > 3.5s
+    }
+    return () => clearTimeout(timer);
+  }, [loading, mode]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,40 +191,32 @@ export default function Join() {
 
     if (code !== validCode) { setError('Invalid invite code'); return; }
     if (real.length < 3) { setError('Username must be at least 3 characters'); return; }
-    if (anon.length < 2) { setError('Anonymous name must be at least 2 characters'); return; }
-    if (pw.length < 6) { setError('Password must be at least 6 characters'); return; }
+    if (anon.length < 3) { setError('Anonymous name must be at least 5 characters'); return; }
+    if (pw.length < 8) { setError('Password must be at least 8 characters'); return; }
 
     setLoading(true);
 
     try {
-      // 1. Check if anonymous name is taken in Firestore
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('anonymous_username', '==', anon), limit(1));
-      const querySnapshot = await getDocs(q);
-      
-      if (!querySnapshot.empty) { 
-        setError('Anonymous name taken. Try another!'); 
-        setLoading(false); 
-        return; 
-      }
-
-      // 2. Call Backend Signup
-      await api.post('/auth/signup', {
+      // 1. Call Backend Signup (now also checks if anon name is taken)
+      const signupResult = await api.post('/auth/signup', {
         realUsername: real,
         anonymousUsername: anon,
         password: pw
       });
 
-      // 3. Sign in on client to get ID token (even though we have session cookie, JS SDK needs it for Firestore)
-      const virtualEmail = `${real.toLowerCase()}@voidchat.internal`;
-      const userCredential = await signInWithEmailAndPassword(auth, virtualEmail, pw);
-      const idToken = await userCredential.user.getIdToken();
+      // 2. Sign in with Custom Token (faster than password auth)
+      const userCredential = await signInWithCustomToken(auth, signupResult.customToken);
+      
+      // 3. BACKGROUND: Exchange for Session Cookie (don't wait)
+      userCredential.user.getIdToken().then(idToken => {
+        api.post('/auth/login', { idToken }).catch(err => {
+          console.error("Background session setup failed:", err);
+        });
+      });
 
-      // 4. Exchange for Session Cookie
-      await api.post('/auth/login', { idToken });
-
+      // 4. Instant Navigation
       setStep('success');
-      setTimeout(() => navigate('/dashboard'), 1200);
+      navigate('/dashboard');
     } catch (err: any) {
       if (err.code === 'auth/email-already-in-use') {
         setError('Username taken. Try another!');
@@ -230,7 +259,7 @@ export default function Join() {
       await api.post('/auth/login', { idToken });
 
       setStep('success');
-      setTimeout(() => navigate('/dashboard'), 1200);
+      navigate('/dashboard'); // No delay here either
     } catch (err: any) {
       setError('Invalid anonymous name or password');
       setLoading(false);
@@ -311,8 +340,9 @@ export default function Join() {
                   )}
 
                   <div>
-                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
-                      Anonymous name
+                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex justify-between items-end">
+                      <span>Anonymous name</span>
+                      <span className="text-[10px] lowercase text-slate-600">min 5 chars</span>
                     </label>
                     <div className="relative">
                       <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-mono">@</span>
@@ -323,8 +353,9 @@ export default function Join() {
                   </div>
 
                   <div>
-                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
-                      Secure Password
+                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex justify-between items-end">
+                      <span>Secure Password</span>
+                      <span className="text-[10px] lowercase text-slate-600">min 8 chars</span>
                     </label>
                     <div className="relative">
                       <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500">🔐</span>
@@ -373,7 +404,7 @@ export default function Join() {
                     {loading ? (
                       <span className="flex items-center justify-center gap-2">
                         <div className="w-4 h-4 border-2 border-white/50 border-t-white rounded-full animate-spin" />
-                        {mode === 'signup' ? 'Creating...' : 'Connecting...'}
+                        {loadingText}
                       </span>
                     ) : (
                       <span className="flex items-center justify-center gap-2">

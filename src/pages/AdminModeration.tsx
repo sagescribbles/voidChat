@@ -73,7 +73,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { ref, onValue, off } from 'firebase/database';
-import { db, rtdb } from '../lib/firebase';
+import { db, rtdb, auth } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useSystemConfig, SystemConfig } from '../hooks/useSystemConfig';
 import { toast } from 'sonner';
@@ -98,6 +98,28 @@ export default function AdminModeration() {
   const navigate = useNavigate();
   const [reports, setReports] = useState<Report[]>([]);
   const [filter, setFilter] = useState<'all' | 'pending' | 'reviewed' | 'resolved' | 'ignored'>('pending');
+
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+  const api = {
+    delete: async (endpoint: string) => {
+      // Get fresh ID token from Firebase SDK for reliable auth
+      const token = await auth.currentUser?.getIdToken(true);
+      
+      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+        method: 'DELETE',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || errorData.error || `Request failed with status ${response.status}`);
+      }
+      return response.json();
+    }
+  };
   const [search, setSearch] = useState('');
   const [fetching, setFetching] = useState(true);
 
@@ -181,6 +203,11 @@ export default function AdminModeration() {
   const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
   const [isScanningSpam, setIsScanningSpam] = useState(false);
   const [activeAnnouncements, setActiveAnnouncements] = useState<any[]>([]);
+
+  // Content Control sub-tab & pagination
+  const [contentSubTab, setContentSubTab] = useState<'confessions' | 'debates' | 'polls'>('confessions');
+  const [contentPage, setContentPage] = useState(1);
+  const contentPerPage = 5;
 
   const CONFIRMATION_PHRASE = "ERASE ALL PLATFORM DATA";
 
@@ -541,15 +568,28 @@ export default function AdminModeration() {
       return;
     }
 
-    if (!window.confirm("Are you sure you want to permanently delete this user? This action cannot be undone.")) return;
+    if (!window.confirm("Are you sure you want to PERMANENTLY purge this user? They will be logged out and removed from authentication. This cannot be undone.")) return;
+    
     try {
-      await deleteDoc(doc(db, 'users', userId));
-      toast.success("User permanently deleted from database.");
-      // If the deleted user was in the flagged list, remove them
+      // Use the administrative backend endpoint to purge from Auth + Firestore + Revoke session
+      await api.delete(`/auth/users/${userId}`);
+      toast.success("User fully purged: Session revoked & Database record deleted.");
+      
+      // Update all local lists immediately for instant feedback
+      setAllUsers(prev => prev.filter(u => u.id !== userId));
       setFlaggedUsers(prev => prev.filter(u => u.id !== userId));
-    } catch (err) {
+      setBlockedUsers(prev => prev.filter(u => u.id !== userId));
+      
+      if (selectedUser?.id === userId) {
+        setSelectedUser(null);
+      }
+    } catch (err: any) {
       console.error('Delete user error:', err);
-      toast.error('Failed to delete user.');
+      if (err.message?.includes('Unauthorized session')) {
+        toast.error('Session Expired: Please log out and back in to refresh your administrative access.');
+      } else {
+        toast.error(`Failed to purge user: ${err.message}`);
+      }
     }
   };
 
@@ -730,7 +770,14 @@ export default function AdminModeration() {
       'poll_votes',
       'voice_rooms',
       'notifications',
-      'online_users'
+      'online_users',
+      'whisper_stories',
+      'whisper_story_parts',
+      'whisper_story_comments',
+      'whisper_part_comments',
+      'whisper_story_follows',
+      'whisper_story_likes',
+      'whisper_branch_votes'
     ];
 
     setErasureTotal(collectionsToErase.length);
@@ -1012,7 +1059,7 @@ export default function AdminModeration() {
               <h2 className="text-2xl font-black uppercase tracking-tight">Danger Zone</h2>
             </div>
             <p className="text-slate-300 mb-8 leading-relaxed">
-              The <span className="text-red-400 font-bold">Nuclear Option</span> will permanently erase every single piece of content on this platform—including messages, polls, shouts, and reports. User profiles will be preserved, but all their history will vanish forever.
+              The <span className="text-red-400 font-bold">Nuclear Option</span> will permanently erase every single piece of content on this platform—including messages, polls, shouts, whisper stories, and reports. User profiles will be preserved, but all their history will vanish forever.
             </p>
             <button 
               onClick={() => setShowNuclearModal(true)}
@@ -1511,8 +1558,8 @@ export default function AdminModeration() {
             {adminToolsTab === 'content' && (
               <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
                 {/* Content Moderation Center */}
-                <section className="bg-white/5 rounded-[2.5rem] border border-white/5 p-8 backdrop-blur-md">
-                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+                <section className="bg-white/5 rounded-[2.5rem] border border-white/5 p-6 md:p-8 backdrop-blur-md">
+                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                       <div>
                         <div className="flex items-center gap-3 mb-1">
                           <Layers size={22} className="text-amber-400" />
@@ -1522,146 +1569,190 @@ export default function AdminModeration() {
                       </div>
                    </div>
 
-                   <div className="grid gap-8 grid-cols-1 lg:grid-cols-3">
-                      {/* Recent Confessions */}
-                      <div className="space-y-6">
-                        <div className="flex items-center justify-between pb-4 border-b border-white/5">
-                           <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Recent Confessions</h4>
-                           <span className="text-[10px] bg-sky-500/10 text-sky-500 px-2 py-0.5 rounded-lg border border-sky-500/20 font-bold">LIVE</span>
-                        </div>
-                        <div className="space-y-4">
-                            {recentContent.confessions.map((c: any) => (
-                              <div 
-                                key={c.id} 
-                                className="group p-5 rounded-3xl bg-black/40 border border-white/5 hover:border-sky-500/30 transition-all relative cursor-pointer"
-                                onClick={(e) => {
-                                  if ((e.target as HTMLElement).closest('button')) return;
-                                  const url = getTargetUrl({ target_type: 'confession', target_id: c.id } as Report);
-                                  if (url) navigate(url);
-                                }}
-                              >
-                                 <p className="text-sm text-slate-300 leading-relaxed line-clamp-3 mb-4">{c.content}</p>
-                                 <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                       <div className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
-                                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                                         {c.created_at?.toDate ? c.created_at.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'NEW'}
-                                       </span>
-                                    </div>
-                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                       <button 
-                                         onClick={(e) => {
-                                           e.stopPropagation();
-                                           handleQuickDelete('confession', c.id);
-                                         }}
-                                         className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-slate-500 hover:text-red-500 transition"
-                                       >
-                                         <Trash2 size={14} />
-                                       </button>
-                                    </div>
-                                 </div>
-                              </div>
-                            ))}
-                         </div>
-                       </div>
- 
-                       {/* Recent Debates */}
-                       <div className="space-y-6">
-                         <div className="flex items-center justify-between pb-4 border-b border-white/5">
-                            <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Recent Debates</h4>
-                            <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-lg border border-amber-500/20 font-bold">ACTIVE</span>
-                         </div>
-                         <div className="space-y-4">
-                            {recentContent.debates.map((d: any) => (
-                              <div 
-                                key={d.id} 
-                                className="group p-5 rounded-3xl bg-black/40 border border-white/5 hover:border-amber-500/30 transition-all relative cursor-pointer"
-                                onClick={(e) => {
-                                  if ((e.target as HTMLElement).closest('button')) return;
-                                  const url = getTargetUrl({ target_type: 'debate', target_id: d.id } as Report);
-                                  if (url) navigate(url);
-                                }}
-                              >
-                                 <div className="mb-2">
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-500/70">{d.category || 'General'}</span>
-                                    <h5 className="text-sm font-bold text-white mt-1 line-clamp-2">{d.topic}</h5>
-                                 </div>
-                                 <div className="flex items-center justify-between mt-4">
-                                    <div className="flex items-center gap-2">
-                                       <Users size={12} className="text-slate-500" />
-                                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{d.participants?.length || 0} Battling</span>
-                                    </div>
-                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                       <button 
-                                         onClick={(e) => {
-                                           e.stopPropagation();
-                                           handleQuickDelete('debate', d.id);
-                                         }}
-                                         className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-slate-500 hover:text-red-500 transition"
-                                       >
-                                         <Trash2 size={14} />
-                                       </button>
-                                    </div>
-                                 </div>
-                              </div>
-                            ))}
-                         </div>
-                       </div>
- 
-                       {/* Recent Polls */}
-                       <div className="space-y-6">
-                         <div className="flex items-center justify-between pb-4 border-b border-white/5">
-                            <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Recent Polls</h4>
-                            <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-lg border border-emerald-500/20 font-bold">VOTING</span>
-                         </div>
-                         <div className="space-y-4">
-                            {recentContent.polls.map((p: any) => (
-                              <div 
-                                key={p.id} 
-                                className="group p-5 rounded-3xl bg-black/40 border border-white/5 hover:border-emerald-500/30 transition-all relative cursor-pointer"
-                                onClick={(e) => {
-                                  if ((e.target as HTMLElement).closest('button')) return;
-                                  const url = getTargetUrl({ target_type: 'poll', target_id: p.id } as Report);
-                                  if (url) navigate(url);
-                                }}
-                              >
-                                 <h5 className="text-sm font-bold text-white mb-2 line-clamp-2">{p.question}</h5>
-                                 <div className="space-y-2 mb-4">
-                                    {p.options?.map((opt: any, idx: number) => {
-                                      const totalVotes = p.total_votes || 1;
-                                      const percentage = Math.round(((opt.votes || 0) / totalVotes) * 100);
-                                      return (
-                                        <div key={idx} className="space-y-1">
-                                          <div className="flex justify-between items-center text-[8px] uppercase font-bold text-slate-500 tracking-tighter">
-                                            <span>{opt.text}</span>
-                                            <span>{percentage}%</span>
-                                          </div>
-                                          <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                                            <div className="h-full bg-emerald-500/40 transition-all duration-1000" style={{ width: `${percentage}%` }} />
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                 </div>
-                                 <div className="flex items-center justify-between">
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{p.total_votes || 0} Votes</span>
-                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                       <button 
-                                         onClick={(e) => {
-                                           e.stopPropagation();
-                                           handleQuickDelete('poll', p.id);
-                                         }}
-                                         className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-slate-500 hover:text-red-500 transition"
-                                       >
-                                         <Trash2 size={14} />
-                                       </button>
-                                    </div>
-                                 </div>
-                              </div>
-                            ))}
-                         </div>
-                    </div>
+                   {/* Content Sub-Navigation */}
+                   <div className="flex gap-2 p-1 rounded-2xl bg-white/5 border border-white/5 mb-6 overflow-x-auto">
+                     {[
+                       { id: 'confessions' as const, label: 'Confessions', count: recentContent.confessions.length, activeClass: 'bg-sky-500/20 text-sky-400 border border-sky-500/30 shadow-lg', badgeActive: 'bg-sky-500/20' },
+                       { id: 'debates' as const, label: 'Debates', count: recentContent.debates.length, activeClass: 'bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-lg', badgeActive: 'bg-amber-500/20' },
+                       { id: 'polls' as const, label: 'Polls', count: recentContent.polls.length, activeClass: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-lg', badgeActive: 'bg-emerald-500/20' },
+                     ].map((tab) => (
+                       <button
+                         key={tab.id}
+                         onClick={() => { setContentSubTab(tab.id); setContentPage(1); }}
+                         className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex-1 justify-center ${
+                           contentSubTab === tab.id
+                           ? tab.activeClass
+                           : 'text-slate-400 hover:text-white hover:bg-white/5'
+                         }`}
+                       >
+                         {tab.label}
+                         <span className={`text-[9px] px-1.5 py-0.5 rounded-md ${
+                           contentSubTab === tab.id ? tab.badgeActive : 'bg-white/5'
+                         }`}>{tab.count}</span>
+                       </button>
+                     ))}
                    </div>
+
+                   {/* Confessions Tab */}
+                   {contentSubTab === 'confessions' && (
+                     <div className="space-y-4">
+                       <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                         <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Recent Confessions</h4>
+                         <span className="text-[10px] bg-sky-500/10 text-sky-500 px-2 py-0.5 rounded-lg border border-sky-500/20 font-bold">LIVE</span>
+                       </div>
+                       {recentContent.confessions.slice((contentPage - 1) * contentPerPage, contentPage * contentPerPage).map((c: any) => (
+                         <div 
+                           key={c.id} 
+                           className="group p-5 rounded-3xl bg-black/40 border border-white/5 hover:border-sky-500/30 transition-all relative cursor-pointer"
+                           onClick={(e) => {
+                             if ((e.target as HTMLElement).closest('button')) return;
+                             const url = getTargetUrl({ target_type: 'confession', target_id: c.id } as Report);
+                             if (url) navigate(url);
+                           }}
+                         >
+                           <p className="text-sm text-slate-300 leading-relaxed line-clamp-3 mb-4">{c.content}</p>
+                           <div className="flex items-center justify-between">
+                             <div className="flex items-center gap-2">
+                               <div className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
+                               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                 {c.created_at?.toDate ? c.created_at.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'NEW'}
+                               </span>
+                             </div>
+                             <button 
+                               onClick={(e) => { e.stopPropagation(); handleQuickDelete('confession', c.id); }}
+                               className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-slate-500 hover:text-red-500 transition"
+                             >
+                               <Trash2 size={14} />
+                             </button>
+                           </div>
+                         </div>
+                       ))}
+                       {recentContent.confessions.length === 0 && (
+                         <p className="text-center text-slate-500 text-sm py-8">No confessions found</p>
+                       )}
+                     </div>
+                   )}
+
+                   {/* Debates Tab */}
+                   {contentSubTab === 'debates' && (
+                     <div className="space-y-4">
+                       <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                         <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Recent Debates</h4>
+                         <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-lg border border-amber-500/20 font-bold">ACTIVE</span>
+                       </div>
+                       {recentContent.debates.slice((contentPage - 1) * contentPerPage, contentPage * contentPerPage).map((d: any) => (
+                         <div 
+                           key={d.id} 
+                           className="group p-5 rounded-3xl bg-black/40 border border-white/5 hover:border-amber-500/30 transition-all relative cursor-pointer"
+                           onClick={(e) => {
+                             if ((e.target as HTMLElement).closest('button')) return;
+                             const url = getTargetUrl({ target_type: 'debate', target_id: d.id } as Report);
+                             if (url) navigate(url);
+                           }}
+                         >
+                           <div className="mb-2">
+                             <span className="text-[10px] font-black uppercase tracking-widest text-amber-500/70">{d.category || 'General'}</span>
+                             <h5 className="text-sm font-bold text-white mt-1 line-clamp-2">{d.topic}</h5>
+                           </div>
+                           <div className="flex items-center justify-between mt-4">
+                             <div className="flex items-center gap-2">
+                               <Users size={12} className="text-slate-500" />
+                               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{d.participants?.length || 0} Battling</span>
+                             </div>
+                             <button 
+                               onClick={(e) => { e.stopPropagation(); handleQuickDelete('debate', d.id); }}
+                               className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-slate-500 hover:text-red-500 transition"
+                             >
+                               <Trash2 size={14} />
+                             </button>
+                           </div>
+                         </div>
+                       ))}
+                       {recentContent.debates.length === 0 && (
+                         <p className="text-center text-slate-500 text-sm py-8">No debates found</p>
+                       )}
+                     </div>
+                   )}
+
+                   {/* Polls Tab */}
+                   {contentSubTab === 'polls' && (
+                     <div className="space-y-4">
+                       <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                         <h4 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Recent Polls</h4>
+                         <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-lg border border-emerald-500/20 font-bold">VOTING</span>
+                       </div>
+                       {recentContent.polls.slice((contentPage - 1) * contentPerPage, contentPage * contentPerPage).map((p: any) => (
+                         <div 
+                           key={p.id} 
+                           className="group p-5 rounded-3xl bg-black/40 border border-white/5 hover:border-emerald-500/30 transition-all relative cursor-pointer"
+                           onClick={(e) => {
+                             if ((e.target as HTMLElement).closest('button')) return;
+                             const url = getTargetUrl({ target_type: 'poll', target_id: p.id } as Report);
+                             if (url) navigate(url);
+                           }}
+                         >
+                           <h5 className="text-sm font-bold text-white mb-2 line-clamp-2">{p.question}</h5>
+                           <div className="space-y-2 mb-4">
+                             {p.options?.map((opt: any, idx: number) => {
+                               const totalVotes = p.total_votes || 1;
+                               const percentage = Math.round(((opt.votes || 0) / totalVotes) * 100);
+                               return (
+                                 <div key={idx} className="space-y-1">
+                                   <div className="flex justify-between items-center text-[8px] uppercase font-bold text-slate-500 tracking-tighter">
+                                     <span>{opt.text}</span>
+                                     <span>{percentage}%</span>
+                                   </div>
+                                   <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                     <div className="h-full bg-emerald-500/40 transition-all duration-1000" style={{ width: `${percentage}%` }} />
+                                   </div>
+                                 </div>
+                               );
+                             })}
+                           </div>
+                           <div className="flex items-center justify-between">
+                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{p.total_votes || 0} Votes</span>
+                             <button 
+                               onClick={(e) => { e.stopPropagation(); handleQuickDelete('poll', p.id); }}
+                               className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-slate-500 hover:text-red-500 transition"
+                             >
+                               <Trash2 size={14} />
+                             </button>
+                           </div>
+                         </div>
+                       ))}
+                       {recentContent.polls.length === 0 && (
+                         <p className="text-center text-slate-500 text-sm py-8">No polls found</p>
+                       )}
+                     </div>
+                   )}
+
+                   {/* Pagination */}
+                   {(() => {
+                     const currentList = recentContent[contentSubTab] || [];
+                     const totalPages = Math.ceil(currentList.length / contentPerPage);
+                     if (totalPages <= 1) return null;
+                     return (
+                       <div className="flex items-center justify-center gap-3 mt-8 pt-6 border-t border-white/5">
+                         <button
+                           disabled={contentPage <= 1}
+                           onClick={() => setContentPage(p => p - 1)}
+                           className="h-10 w-10 flex items-center justify-center rounded-xl bg-white/5 border border-white/10 text-white disabled:opacity-30 hover:bg-white/10 transition"
+                         >
+                           <ChevronLeft size={18} />
+                         </button>
+                         <span className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                           {contentPage} / {totalPages}
+                         </span>
+                         <button
+                           disabled={contentPage >= totalPages}
+                           onClick={() => setContentPage(p => p + 1)}
+                           className="h-10 w-10 flex items-center justify-center rounded-xl bg-white/5 border border-white/10 text-white disabled:opacity-30 hover:bg-white/10 transition"
+                         >
+                           <ChevronRight size={18} />
+                         </button>
+                       </div>
+                     );
+                   })()}
                 </section>
               </div>
             )}

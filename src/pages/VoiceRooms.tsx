@@ -370,7 +370,6 @@ export default function VoiceRooms() {
       console.log(`[VoiceRooms] RTDB Connection Status: ${isConnected}`);
       if (!isConnected) {
         toast.error("RTDB Disconnected - Check your network/env", { id: 'rtdb-status' });
-      } else {
       }
     });
     return () => off(connectedRef);
@@ -830,17 +829,49 @@ export default function VoiceRooms() {
   };
 
   const toggleMute = useCallback(() => {
-    const track = localStreamRef.current?.getAudioTracks()[0];
-    if (track) track.enabled = muted;
+    const isUnmuting = muted;
+    
+    if (isUnmuting) {
+      if (myRole === 'audience') {
+        const currentSpeakers = participants.filter(p => p.role === 'speaker');
+        if (currentSpeakers.length >= 5) {
+          toast.error('The stage is full! Maximum 5 members allowed on stage.');
+          return;
+        }
+      }
 
-    // Promote to stage if unmuting from audience
-    if (muted && myRole === 'audience' && localStreamRef.current) {
-      setMyRole('speaker');
-      toast.success("You've moved to the stage!");
+      const track = localStreamRef.current?.getAudioTracks()[0];
+      if (track) {
+        track.enabled = true;
+        setMuted(false);
+        if (myRole === 'audience') {
+          setMyRole('speaker');
+          toast.success("You've moved to the stage!");
+        } else {
+          toast.success("Microphone unmuted.");
+        }
+      } else {
+        toast.error("Microphone not available. Please check your permissions.");
+      }
+    } else {
+      const track = localStreamRef.current?.getAudioTracks()[0];
+      if (track) track.enabled = false;
+      
+      setMuted(true);
+      toast.info("Microphone muted.");
     }
+  }, [muted, myRole, participants]);
 
-    setMuted(m => !m);
-  }, [muted, myRole]);
+  const leaveStage = useCallback(() => {
+    if (myRole !== 'speaker') return;
+    
+    const track = localStreamRef.current?.getAudioTracks()[0];
+    if (track) track.enabled = false;
+    
+    setMuted(true);
+    setMyRole('audience');
+    toast.info("You've stepped down to the audience.");
+  }, [myRole]);
 
   const sendReaction = (emoji: string) => {
     if (!user || !activeRoom || safeMode) return;
@@ -866,8 +897,14 @@ export default function VoiceRooms() {
     if (!isVoiceRoute && activeRoom) {
       // Minimized Widget
       return (
-        <div className="fixed bottom-6 right-6 z-50 font-display">
-          <div className="bg-room-dark/95 backdrop-blur-xl border border-white/10 p-4 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center gap-4 w-72">
+        <motion.div 
+          drag
+          dragConstraints={{ left: -window.innerWidth + 300, right: 0, top: -window.innerHeight + 100, bottom: 0 }}
+          dragElastic={0.1}
+          dragMomentum={false}
+          className="fixed bottom-6 right-6 z-50 font-display cursor-grab active:cursor-grabbing"
+        >
+          <div className="bg-room-dark/95 backdrop-blur-xl border border-white/10 p-4 rounded-3xl shadow-[0_40px_100px_rgba(0,0,0,0.6)] flex items-center gap-4 w-80 select-none">
             <div className={`w-12 h-12 rounded-full flex items-center justify-center relative overflow-hidden shrink-0 border-2 ${isSpeaking && !muted ? 'border-accent-purple speaking-glow' : 'border-white/10'}`}>
               <Mic size={20} className="relative z-10 text-white" />
             </div>
@@ -881,14 +918,20 @@ export default function VoiceRooms() {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={toggleMute} className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${muted ? 'bg-red-500/20 text-red-500' : 'bg-white/10 text-white hover:bg-white/20'}`}>
+              <button 
+                onClick={(e) => { e.stopPropagation(); toggleMute(); }} 
+                className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${muted ? 'bg-red-500/20 text-red-500' : 'bg-white/10 text-white hover:bg-white/20'}`}
+              >
                 <span className="material-symbols-outlined text-[20px]">{muted ? 'mic_off' : 'mic'}</span>
               </button>
-              <button onClick={() => navigate('/voice')} className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-all">
+              <button 
+                onClick={(e) => { e.stopPropagation(); navigate('/voice'); }} 
+                className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-all"
+              >
                 <span className="material-symbols-outlined text-[20px]">open_in_full</span>
               </button>
               <button 
-                onClick={() => { if (window.confirm('Leave this room?')) leaveRoom(); }} 
+                onClick={(e) => { e.stopPropagation(); if (window.confirm('Leave this room?')) leaveRoom(); }} 
                 className="w-9 h-9 rounded-full bg-red-500/10 hover:bg-red-500/20 text-red-500 flex items-center justify-center transition-all" 
                 title="Leave"
               >
@@ -896,7 +939,7 @@ export default function VoiceRooms() {
               </button>
             </div>
           </div>
-        </div>
+        </motion.div>
       );
     }
     return null;
@@ -1056,7 +1099,7 @@ export default function VoiceRooms() {
               )}
             </div>
             {/* Inline Chat for Mobile */}
-            <div className="lg:hidden mt-4 sm:mt-8 px-4 sm:px-6 py-4 rounded-2xl sm:rounded-3xl bg-[#1c1c24]/50 border border-white/5 shadow-2xl overflow-hidden flex flex-col">
+            <div className="lg:hidden mt-2 px-4 sm:px-6 py-4 rounded-2xl sm:rounded-3xl bg-[#1c1c24]/50 border border-white/5 shadow-2xl overflow-hidden flex flex-col">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-indigo-400">forum</span>
@@ -1070,11 +1113,11 @@ export default function VoiceRooms() {
 
               {/* Scrollable Message Area */}
               <div 
-                className="flex-1 overflow-y-auto pr-2 mb-4 flex flex-col gap-5 custom-scrollbar-voice max-h-[380px]" 
+                className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 custom-scrollbar-voice max-h-[320px]" 
                 ref={chatScrollRef}
               >
                 {chatMessages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-slate-600 gap-3">
+                  <div className="flex flex-col items-center justify-center py-10 text-slate-600 gap-3">
                     <span className="material-symbols-outlined text-4xl opacity-20">bubble_chart</span>
                     <p className="text-[11px] font-medium uppercase tracking-widest">Quiet in the void...</p>
                   </div>
@@ -1082,8 +1125,8 @@ export default function VoiceRooms() {
                   chatMessages.map(msg => {
                     if (msg.isSystem) {
                       return (
-                        <div key={msg.id} className="flex justify-center my-1">
-                          <span className="text-[10px] font-semibold px-3 py-1 rounded-full bg-white/5 text-slate-500 border border-white/5 uppercase tracking-tighter">
+                        <div key={msg.id} className="flex justify-center my-0.5">
+                          <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-white/5 text-slate-500 border border-white/5 uppercase tracking-tighter">
                             {msg.text}
                           </span>
                         </div>
@@ -1092,20 +1135,20 @@ export default function VoiceRooms() {
                     
                     const isMe = msg.userId === user?.uid;
                     return (
-                      <div key={msg.id} className={`flex gap-3 max-w-full ${isMe ? 'flex-row-reverse' : ''}`}>
-                        <div className={`w-8 h-8 rounded-full flex shrink-0 items-center justify-center text-xs font-bold text-white shadow-sm ${
+                      <div key={msg.id} className={`flex gap-2 max-w-full ${isMe ? 'flex-row-reverse' : ''}`}>
+                        <div className={`w-7 h-7 rounded-full flex shrink-0 items-center justify-center text-[10px] font-bold text-white shadow-sm ${
                           isMe ? 'bg-indigo-500 border border-indigo-400/50' : 'bg-slate-700/80 border border-slate-600'
                         }`}>
                           {(msg.username || "??").slice(0, 2).toUpperCase()}
                         </div>
                         <div className={`flex flex-col min-w-0 flex-1 ${isMe ? 'items-end' : ''}`}>
-                          <div className={`flex items-baseline gap-2 mb-1 ${isMe ? 'flex-row-reverse' : ''}`}>
-                            <span className={`font-semibold text-[11px] ${isMe ? 'text-indigo-300' : 'text-slate-400'}`}>{isMe ? 'You' : msg.username}</span>
-                            <span className="text-[9px] text-slate-600 shrink-0 font-bold">12:00</span>
+                          <div className={`flex items-baseline gap-2 mb-0.5 ${isMe ? 'flex-row-reverse' : ''}`}>
+                            <span className={`font-semibold text-[10px] ${isMe ? 'text-indigo-300' : 'text-slate-400'}`}>{isMe ? 'You' : msg.username}</span>
+                            <span className="text-[8px] text-slate-600 shrink-0 font-bold">12:00</span>
                           </div>
                           <div className={isMe 
-                               ? 'bg-indigo-600/30 border border-indigo-500/20 px-4 py-2 rounded-2xl rounded-tr-none text-slate-200 text-[13px] break-words whitespace-pre-wrap shadow-sm' 
-                               : 'text-[13px] text-slate-300 bg-white/[0.03] px-4 py-2 rounded-2xl rounded-tl-none border border-white/5 break-words whitespace-pre-wrap shadow-sm'}>
+                               ? 'bg-indigo-600/30 border border-indigo-500/20 px-3 py-1.5 rounded-xl rounded-tr-none text-slate-200 text-[12px] break-words whitespace-pre-wrap shadow-sm' 
+                               : 'text-[12px] text-slate-300 bg-white/[0.03] px-3 py-1.5 rounded-xl rounded-tl-none border border-white/5 break-words whitespace-pre-wrap shadow-sm'}>
                             {msg.text}
                           </div>
                         </div>
@@ -1115,23 +1158,6 @@ export default function VoiceRooms() {
                 )}
               </div>
               
-              {/* Still Input Bar */}
-              <div className="relative flex items-center bg-black/40 rounded-2xl p-1 border border-white/5 shadow-inner">
-                <input 
-                  type="text"
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && sendChat()}
-                  placeholder="Enter the void..."
-                  className="w-full bg-transparent py-3 pl-4 pr-12 text-sm text-slate-100 placeholder-slate-600 focus:outline-none transition-all"
-                />
-                <button 
-                  onClick={sendChat}
-                  className="absolute right-1 w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white hover:bg-indigo-500 transition-colors shadow-lg active:scale-95"
-                >
-                  <span className="material-symbols-outlined text-[20px]">send</span>
-                </button>
-              </div>
             </div>
           </div>
 
@@ -1201,32 +1227,52 @@ export default function VoiceRooms() {
           </aside>
 
           {/* Floating Controls Bar */}
-          <div className="absolute bottom-4 sm:bottom-8 left-1/2 -translate-x-1/2 bg-[#1c1c24]/90 backdrop-blur-xl rounded-full px-4 sm:px-6 py-2.5 flex items-center gap-2 sm:gap-3 shadow-[0_10px_30px_rgba(0,0,0,0.5)] border border-white/10 z-30 w-max max-w-[95vw] justify-center">
-            <button 
-              onClick={toggleMute}
-              className={`w-11 h-11 sm:w-12 sm:h-12 shrink-0 rounded-full flex items-center justify-center transition-all group ${
-                muted ? 'bg-white/5 hover:bg-white/10 text-slate-300' : 'bg-white/10 hover:bg-white/20 text-sky-300 shadow-[0_0_15px_rgba(125,211,252,0.15)]'
-              }`}
-            >
-              <span className={`material-symbols-outlined transition-colors text-[22px] ${!muted && 'text-sky-300'}`}>{muted ? 'mic_off' : 'mic'}</span>
-            </button>
-            <button 
-              onClick={() => setHandRaised(!handRaised)}
-              className={`w-11 h-11 sm:w-12 sm:h-12 shrink-0 rounded-full flex items-center justify-center transition-all group ${
-                handRaised ? 'bg-amber-400/20 text-amber-300 shadow-[0_0_15px_rgba(251,191,36,0.15)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'
-              }`}
-            >
-              <span className={`material-symbols-outlined transition-colors text-[22px] ${handRaised && 'text-amber-300'}`}>back_hand</span>
-            </button>
-            <div className="relative">
-              <button 
-                onClick={() => setShowReactionMenu(!showReactionMenu)}
-                className={`w-11 h-11 sm:w-12 sm:h-12 shrink-0 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all group ${showReactionMenu ? 'bg-indigo-500/20 text-indigo-300' : ''}`}
-              >
-                <span className="material-symbols-outlined text-slate-300 group-hover:text-amber-300 transition-colors text-[22px]">add_reaction</span>
-              </button>
-              
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 pointer-events-none z-[60] mb-2">
+          <div className="absolute bottom-4 sm:bottom-8 left-0 right-0 z-30 flex flex-col items-center gap-3 px-2 pointer-events-none">
+            {/* Reaction Menu - Viewport Centered */}
+            <AnimatePresence>
+              {showReactionMenu && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 15, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 15, scale: 0.9 }}
+                  className="absolute bottom-44 left-1/2 -ml-[165px] bg-[#1c1c24]/98 backdrop-blur-3xl border border-white/10 rounded-2xl p-2.5 flex gap-2.5 shadow-[0_20px_60px_rgba(0,0,0,0.9)] z-[100] overflow-visible pointer-events-auto"
+                  style={{ width: '330px' }}
+                >
+                  {['❤️', '🔥', '👍', '😂', '😮', '🙌'].map(emoji => (
+                    <button 
+                      key={emoji}
+                      onClick={() => sendReaction(emoji)}
+                      className="w-11 h-11 flex items-center justify-center text-3xl hover:bg-white/5 rounded-xl transition-all hover:scale-110 active:scale-90"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Mobile Persistent Chat Input Bar */}
+            <div className="lg:hidden w-full max-w-sm pointer-events-auto z-[90]">
+              <div className="relative flex items-center bg-[#1c1c24]/95 backdrop-blur-2xl rounded-2xl p-1 border border-white/20 shadow-2xl">
+                <input 
+                  type="text"
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && sendChat()}
+                  placeholder="Comment..."
+                  className="w-full bg-transparent py-2.5 pl-4 pr-12 text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                />
+                <button 
+                  onClick={sendChat}
+                  className="absolute right-1 w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white hover:bg-indigo-500 transition-colors shadow-lg active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-[18px]">send</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="relative pointer-events-auto">
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 pointer-events-none z-[60] mb-2 w-full h-0">
                 <AnimatePresence>
                   {floatingReactions.map(r => (
                     <motion.div
@@ -1235,7 +1281,7 @@ export default function VoiceRooms() {
                       animate={{ y: -150 - Math.random() * 50, opacity: 0, scale: 1.5 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 2 + Math.random(), ease: "easeOut" }}
-                      className="absolute bottom-0 text-3xl drop-shadow-md"
+                      className="absolute bottom-0 left-1/2 -translate-x-1/2 text-3xl drop-shadow-md"
                     >
                       {r.emoji}
                     </motion.div>
@@ -1243,44 +1289,60 @@ export default function VoiceRooms() {
                 </AnimatePresence>
               </div>
 
-              <AnimatePresence>
-                {showReactionMenu && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10, scale: 0.9 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                    className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 bg-[#1c1c24] border border-white/10 rounded-2xl p-2 flex gap-2 shadow-2xl z-50"
+              <div className="bg-[#1c1c24]/90 backdrop-blur-xl rounded-full px-3 sm:px-6 py-2 sm:py-2.5 flex items-center justify-center gap-1.5 sm:gap-3 shadow-[0_10px_30px_rgba(0,0,0,0.5)] border border-white/10 w-auto max-w-full overflow-x-auto no-scrollbar">
+                {myRole === 'speaker' && (
+                  <button 
+                    onClick={leaveStage}
+                    className="w-10 h-10 sm:w-12 sm:h-12 shrink-0 rounded-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 flex items-center justify-center transition-all group border border-indigo-500/20"
+                    title="Step Down from Stage"
                   >
-                    {['❤️', '🔥', '👍', '😂', '😮', '🙌'].map(emoji => (
-                      <button 
-                        key={emoji}
-                        onClick={() => sendReaction(emoji)}
-                        className="w-10 h-10 flex items-center justify-center text-xl hover:bg-white/5 rounded-xl transition-colors"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </motion.div>
+                    <span className="material-symbols-outlined transition-colors text-[20px] sm:text-[22px]">directions_walk</span>
+                  </button>
                 )}
-              </AnimatePresence>
-              
-
+                <button 
+                  onClick={toggleMute}
+                  className={`w-10 h-10 sm:w-12 sm:h-12 shrink-0 rounded-full flex items-center justify-center transition-all group ${
+                    muted ? 'bg-white/5 hover:bg-white/10 text-slate-300' : 'bg-white/10 hover:bg-white/20 text-sky-300 shadow-[0_0_15px_rgba(125,211,252,0.15)]'
+                  }`}
+                >
+                  <span className={`material-symbols-outlined transition-colors text-[20px] sm:text-[22px] ${!muted && 'text-sky-300'}`}>{muted ? 'mic_off' : 'mic'}</span>
+                </button>
+                <button 
+                  onClick={() => setHandRaised(!handRaised)}
+                  className={`w-10 h-10 sm:w-12 sm:h-12 shrink-0 rounded-full flex items-center justify-center transition-all group ${
+                    handRaised ? 'bg-amber-400/20 text-amber-300 shadow-[0_0_15px_rgba(251,191,36,0.15)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'
+                  }`}
+                >
+                  <span className={`material-symbols-outlined transition-colors text-[20px] sm:text-[22px] ${handRaised && 'text-amber-300'}`}>back_hand</span>
+                </button>
+                <button 
+                  onClick={() => setShowReactionMenu(!showReactionMenu)}
+                  className={`w-10 h-10 sm:w-12 sm:h-12 shrink-0 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all group ${showReactionMenu ? 'bg-indigo-500/20 text-indigo-300' : ''}`}
+                >
+                  <span className="material-symbols-outlined text-slate-300 group-hover:text-amber-300 transition-colors text-[20px] sm:text-[22px]">add_reaction</span>
+                </button>
+                
+                <div className="hidden sm:block w-[1px] h-8 bg-white/10 shrink-0 mx-1"></div>
+                <button 
+                  onClick={() => { if (window.confirm('Leave this room?')) leaveRoom(); }}
+                  className="ml-0 sm:ml-2 w-10 h-10 sm:w-auto sm:h-auto sm:px-6 sm:py-2.5 shrink-0 rounded-full bg-rose-500/80 hover:bg-rose-500 flex items-center justify-center gap-2 font-medium text-white shadow-sm transition-all text-sm"
+                  title="Leave"
+                >
+                  <span className="material-symbols-outlined text-[18px]">logout</span>
+                  <span className="hidden sm:inline">Leave</span>
+                </button>
+                {(profile?.is_admin || user?.uid === activeRoom.created_by) && (
+                   <button 
+                    onClick={() => { if (confirm('End this room for everyone?')) endRoom(); }}
+                    className="w-10 h-10 sm:w-auto sm:h-auto sm:px-6 sm:py-2.5 shrink-0 rounded-full bg-slate-700/80 hover:bg-slate-700 flex items-center justify-center gap-2 font-medium text-white shadow-sm transition-all border border-white/5 text-sm"
+                    title="End Room"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">cancel</span>
+                    <span className="hidden sm:inline">End</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="hidden sm:block w-[1px] h-8 bg-white/10 shrink-0"></div>
-            <button 
-              onClick={() => { if (window.confirm('Leave this room?')) leaveRoom(); }}
-              className="ml-0 sm:ml-2 px-4 sm:px-6 py-2.5 shrink-0 rounded-full bg-rose-500/80 hover:bg-rose-500 flex items-center gap-2 font-medium text-white shadow-sm transition-all text-sm"
-            >
-              <span className="material-symbols-outlined text-[18px]">logout</span> Leave
-            </button>
-            {(profile?.is_admin || user?.uid === activeRoom.created_by) && (
-               <button 
-                onClick={() => { if (confirm('End this room for everyone?')) endRoom(); }}
-                className="ml-1 sm:ml-2 px-4 sm:px-6 py-2.5 shrink-0 rounded-full bg-slate-700/80 hover:bg-slate-700 flex items-center gap-2 font-medium text-white shadow-sm transition-all border border-white/5 text-sm"
-              >
-                <span className="material-symbols-outlined text-[18px]">cancel</span> End
-              </button>
-            )}
           </div>
         </main>
       </div>
@@ -1301,65 +1363,79 @@ export default function VoiceRooms() {
       </div>
 
       <header className="relative z-50 border-b border-white/5 bg-[#07070f]/80 backdrop-blur-xl sticky top-0 group">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-6 px-6 py-4">
-          <div className="flex items-center gap-6">
-            <Link to="/dashboard" className="transition-transform active:scale-90">
-              <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all group/back">
-                <ArrowLeft size={18} className="group-hover/back:-translate-x-0.5 transition-transform" />
-              </div>
-            </Link>
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-3">
-                <h1 className="font-black text-2xl tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-6">
+            
+            {/* Header & Title Group */}
+            <div className="flex items-center gap-4 sm:gap-6">
+              <Link to="/dashboard" className="transition-transform active:scale-90 shrink-0">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all group/back">
+                  <ArrowLeft size={18} className="group-hover/back:-translate-x-0.5 transition-transform" />
+                </div>
+              </Link>
+              <div className="space-y-0.5">
+                <h1 className="font-black text-[22px] sm:text-2xl lg:text-3xl whitespace-nowrap tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400 leading-none">
                   Voice Lounge
                 </h1>
-                <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">{activeRoomsCount} Live</span>
-                </div>
+                <p className="hidden sm:flex text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold items-center gap-2 mt-1">
+                  <Users size={10} /> {totalListeners} Listeners Connected
+                </p>
               </div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold flex items-center gap-2">
-                <Users size={10} /> {totalListeners} Listeners Connected
-              </p>
             </div>
-          </div>
 
-          <motion.button 
-            onClick={() => {
-              if (safeMode) {
-                toast.error('Voice field generation is suppressed during Safe Mode');
-                return;
-              }
-              setShowCreate(true);
-            }}
-            disabled={safeMode}
-            className="group relative px-6 py-2.5 rounded-2xl bg-violet-600/10 backdrop-blur-md border border-violet-400/30 text-white font-bold text-sm transition-all flex items-center gap-3 overflow-hidden shadow-[0_0_20px_rgba(139,92,246,0.1)] disabled:opacity-50"
-            whileHover={safeMode ? {} : { y: -2, boxShadow: "0 0 30px rgba(139,92,246,0.2)" }}
-            whileTap={safeMode ? {} : { scale: 0.98 }}
-          >
-            {/* Hover Gradient Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-indigo-600/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-            
-            <div className="relative flex items-center gap-2">
-              <div className="relative">
-                {safeMode ? <ShieldAlert size={18} className="relative z-10" /> : <Mic size={18} className="relative z-10" />}
-                {/* Animated Soundwave Dots */}
-                {!safeMode && (
-                  <div className="absolute -right-1 -top-1 flex gap-[1px]">
-                    {[1, 2].map((_, i) => (
-                      <motion.div 
-                        key={i}
-                        className="w-[2px] bg-violet-400 rounded-full"
-                        animate={{ height: ["2px", "6px", "2px"] }}
-                        transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.2 }}
-                      />
-                    ))}
-                  </div>
-                )}
+            {/* Action Group (Live Stats & Button) */}
+            <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-6 w-full sm:w-auto mt-1 sm:mt-0">
+              
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl bg-emerald-500/10 border border-emerald-500/20 w-fit">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[10px] sm:text-[11px] font-black text-emerald-400 uppercase tracking-widest leading-none">{activeRoomsCount} Live</span>
+                </div>
+                <p className="flex sm:hidden text-[9px] text-slate-500 uppercase tracking-[0.15em] font-bold items-center gap-1.5">
+                  <Users size={10} /> {totalListeners} Connected
+                </p>
               </div>
-              <span className="tracking-tight">{safeMode ? 'Safe Mode Active' : 'Start Voice Room'}</span>
+
+              <motion.button 
+                onClick={() => {
+                  if (safeMode) {
+                    toast.error('Voice field generation is suppressed during Safe Mode');
+                    return;
+                  }
+                  setShowCreate(true);
+                }}
+                disabled={safeMode}
+                className="group relative px-4 sm:px-6 py-2 sm:py-2.5 shrink-0 rounded-xl sm:rounded-2xl bg-violet-600/10 backdrop-blur-md border border-violet-400/30 text-white font-bold text-[11px] sm:text-sm transition-all flex items-center gap-2 sm:gap-3 overflow-hidden shadow-[0_0_20px_rgba(139,92,246,0.1)] disabled:opacity-50"
+                whileHover={safeMode ? {} : { y: -2, boxShadow: "0 0 30px rgba(139,92,246,0.2)" }}
+                whileTap={safeMode ? {} : { scale: 0.98 }}
+              >
+                {/* Hover Gradient Overlay */}
+                <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-indigo-600/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                
+                <div className="relative flex items-center gap-2">
+                  <div className="relative line-clamp-1">
+                    {safeMode ? <ShieldAlert size={16} className="relative z-10" /> : <Mic size={16} className="relative z-10" />}
+                    {/* Animated Soundwave Dots */}
+                    {!safeMode && (
+                      <div className="absolute -right-1 -top-1 flex gap-[1px]">
+                        {[1, 2].map((_, i) => (
+                          <motion.div 
+                            key={i}
+                            className="w-[2px] bg-violet-400 rounded-full hidden sm:block"
+                            animate={{ height: ["2px", "6px", "2px"] }}
+                            transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.2 }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <span className="tracking-tight whitespace-nowrap">{safeMode ? 'Safe Mode Active' : 'Start Voice Room'}</span>
+                </div>
+              </motion.button>
+              
             </div>
-          </motion.button>
+            
+          </div>
         </div>
       </header>
 
@@ -1372,20 +1448,21 @@ export default function VoiceRooms() {
             
             {/* Overview Stats Row */}
             {/* Interactive Engagement Cards */}
-            <div className="grid grid-cols-3 gap-2 md:gap-4 lg:gap-6">
+            {/* Interactive Engagement Cards */}
+            <div className="flex overflow-x-auto no-scrollbar snap-x snap-mandatory gap-3 md:grid md:grid-cols-3 md:gap-4 lg:gap-6 -mx-6 px-6 pb-4 md:mx-0 md:px-0 md:pb-0">
               {/* Card 1: Start Room */}
               <motion.div 
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="relative overflow-hidden group rounded-[1.2rem] border border-white/5 bg-gradient-to-br from-violet-500/10 to-transparent p-3 shadow-lg backdrop-blur-xl transition-all md:rounded-[1.6rem] md:p-6 glass-hover"
+                className="relative overflow-hidden group rounded-[1.2rem] border border-white/5 bg-gradient-to-br from-violet-500/10 to-transparent p-3 sm:p-4 shadow-lg backdrop-blur-xl transition-all md:rounded-[1.6rem] md:p-6 glass-hover shrink-0 w-[42vw] max-w-[180px] md:w-auto md:max-w-none snap-center"
               >
                 <div className="relative flex flex-col items-center text-center gap-1 md:flex-row md:items-start md:justify-between md:text-left md:gap-4">
-                  <div className="order-2 md:order-1">
-                    <p className="font-mono text-[8px] uppercase tracking-wider text-white/38 md:hidden">Start</p>
-                    <p className="hidden font-mono text-[11px] uppercase tracking-[0.26em] text-white/38 md:block">Host</p>
-                    <h3 className="mt-0.5 text-[10px] font-bold text-white md:mt-3 md:text-lg">Start a Voice Room</h3>
+                  <div className="order-2 md:order-1 w-full">
+                    <p className="font-mono text-[8px] sm:text-[9px] uppercase tracking-wider text-white/40 md:hidden">Start</p>
+                    <p className="hidden font-mono text-[11px] uppercase tracking-[0.26em] text-white/40 md:block">Host</p>
+                    <h3 className="mt-0.5 text-[11px] sm:text-[12px] font-bold text-white md:mt-3 md:text-lg">Start a Voice Room</h3>
                     <p className="hidden mt-2 text-sm text-slate-500 leading-relaxed md:block">Host a topic and invite people to join the conversation.</p>
-                    <p className="mt-1 text-[8px] text-slate-500 md:hidden">Host a topic</p>
+                    <p className="mt-1 text-[8px] sm:text-[9px] text-slate-500 md:hidden line-clamp-1">Host a topic</p>
                     
                     <button 
                       type="button"
@@ -1399,15 +1476,15 @@ export default function VoiceRooms() {
                         setShowCreate(true);
                       }}
                       disabled={safeMode}
-                      className="relative z-20 mt-2 w-full py-1.5 rounded-lg bg-violet-500/10 hover:bg-violet-500 text-violet-400 hover:text-white border border-violet-500/20 font-bold text-[8px] transition-all flex items-center justify-center gap-1.5 group/btn md:mt-6 md:py-2.5 md:rounded-xl md:text-xs cursor-pointer disabled:opacity-50"
+                      className="relative z-20 mt-3 w-full py-2 sm:py-2.5 rounded-lg bg-violet-500/10 hover:bg-violet-500 text-violet-400 hover:text-white border border-violet-500/20 font-bold text-[9px] sm:text-[10px] transition-all flex items-center justify-center gap-1.5 group/btn md:mt-6 md:py-2.5 md:rounded-xl md:text-xs cursor-pointer disabled:opacity-50"
                     >
                       <span>{safeMode ? 'Restricted' : 'Create'}</span>
                       {safeMode ? <ShieldAlert size={10} className="md:size-14" /> : <div className="w-1 h-1 rounded-full bg-violet-400 group-hover/btn:bg-white animate-pulse md:w-1.5 md:h-1.5" />}
                     </button>
                   </div>
                   
-                  <div className="order-1 mb-1 rounded-lg border border-violet-500/20 bg-violet-500/10 p-2 md:order-2 md:mb-0 md:rounded-2xl md:p-3">
-                    <Mic2 className="h-3.5 w-3.5 text-violet-400 md:h-5 md:w-5" />
+                  <div className="order-1 mb-1 rounded-full border border-violet-500/20 bg-violet-500/10 p-2.5 sm:p-3 md:order-2 md:mb-0 md:rounded-2xl md:p-3">
+                    <Mic2 className="h-4 w-4 text-violet-400 md:h-5 md:w-5" />
                     <div className="absolute inset-0 bg-violet-400/20 blur-lg rounded-full animate-pulse opacity-50" />
                   </div>
                 </div>
@@ -1418,34 +1495,34 @@ export default function VoiceRooms() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
-                className="relative overflow-hidden group rounded-[1.2rem] border border-white/5 bg-gradient-to-br from-blue-500/10 to-transparent p-3 shadow-lg backdrop-blur-xl transition-all md:rounded-[1.6rem] md:p-6 glass-hover"
+                className="relative overflow-hidden group rounded-[1.2rem] border border-white/5 bg-gradient-to-br from-blue-500/10 to-transparent p-3 sm:p-4 shadow-lg backdrop-blur-xl transition-all md:rounded-[1.6rem] md:p-6 glass-hover shrink-0 w-[42vw] max-w-[180px] md:w-auto md:max-w-none snap-center"
               >
                 <div className="relative flex flex-col items-center text-center gap-1 md:flex-row md:items-start md:justify-between md:text-left md:gap-4">
                   <div className="order-2 md:order-1 w-full">
-                    <p className="font-mono text-[8px] uppercase tracking-wider text-white/38 md:hidden">Live</p>
-                    <p className="hidden font-mono text-[11px] uppercase tracking-[0.26em] text-white/38 md:block">Trending</p>
-                    <h3 className="mt-0.5 text-[10px] font-bold text-white md:mt-3 md:text-lg">Hot Topics</h3>
+                    <p className="font-mono text-[8px] sm:text-[9px] uppercase tracking-wider text-white/40 md:hidden">Live</p>
+                    <p className="hidden font-mono text-[11px] uppercase tracking-[0.26em] text-white/40 md:block">Trending</p>
+                    <h3 className="mt-0.5 text-[11px] sm:text-[12px] font-bold text-white md:mt-3 md:text-lg">Hot Topics</h3>
                     
-                    <div className="mt-2 flex flex-wrap justify-center gap-1 md:mt-4 md:justify-start md:gap-2">
+                    <div className="mt-3 flex flex-wrap justify-center gap-1 md:mt-4 md:justify-start md:gap-2">
                       {hotTopics.length > 0 ? (
                         hotTopics.slice(0, 2).map((room, idx) => (
                           <button 
                             key={room.id}
                             onClick={() => joinRoom(room)}
-                            className="px-1.5 py-0.5 rounded-md bg-white/5 border border-white/5 text-[7px] font-medium text-slate-400 hover:text-blue-300 hover:bg-blue-500/10 hover:border-blue-500/30 transition-all flex items-center gap-1 group/topic md:px-3 md:py-1.5 md:rounded-lg md:text-[10px]"
+                            className="w-full px-2 py-1.5 rounded-md bg-white/5 border border-white/5 text-[9px] sm:text-[10px] font-medium text-slate-400 hover:text-blue-300 hover:bg-blue-500/10 hover:border-blue-500/30 transition-all flex items-center justify-center gap-1.5 group/topic md:w-auto md:px-3 md:py-1.5 md:rounded-lg"
                           >
-                            <MessageSquare size={8} className="group-hover/topic:text-blue-400 transition-colors md:size-10" />
-                            <span className="truncate max-w-[40px] md:max-w-none">{room.name}</span>
+                            <MessageSquare size={10} className="group-hover/topic:text-blue-400 transition-colors md:size-10 shrink-0" />
+                            <span className="truncate max-w-[80px] md:max-w-none">{room.name}</span>
                           </button>
                         ))
                       ) : (
-                        <p className="text-[7px] text-slate-600 font-medium italic md:text-[10px]">Scanning...</p>
+                        <p className="w-full text-center text-[9px] sm:text-[10px] text-slate-500 font-medium italic md:text-left py-1">Scanning...</p>
                       )}
                     </div>
                   </div>
                   
-                  <div className="order-1 mb-1 rounded-lg border border-blue-500/20 bg-blue-500/10 p-2 md:order-2 md:mb-0 md:rounded-2xl md:p-3">
-                    <Flame className="h-3.5 w-3.5 text-blue-400 md:h-5 md:w-5" />
+                  <div className="order-1 mb-1 rounded-full border border-blue-500/20 bg-blue-500/10 p-2.5 sm:p-3 md:order-2 md:mb-0 md:rounded-2xl md:p-3">
+                    <Flame className="h-4 w-4 text-blue-400 md:h-5 md:w-5" />
                   </div>
                 </div>
               </motion.div>
@@ -1455,15 +1532,15 @@ export default function VoiceRooms() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
-                className="relative overflow-hidden group rounded-[1.2rem] border border-white/5 bg-gradient-to-br from-amber-500/10 to-transparent p-3 shadow-lg backdrop-blur-xl transition-all md:rounded-[1.6rem] md:p-6 glass-hover"
+                className="relative overflow-hidden group rounded-[1.2rem] border border-white/5 bg-gradient-to-br from-amber-500/10 to-transparent p-3 sm:p-4 shadow-lg backdrop-blur-xl transition-all md:rounded-[1.6rem] md:p-6 glass-hover shrink-0 w-[42vw] max-w-[180px] md:w-auto md:max-w-none snap-center"
               >
                 <div className="relative flex flex-col items-center text-center gap-1 md:flex-row md:items-start md:justify-between md:text-left md:gap-4">
-                  <div className="order-2 md:order-1">
-                    <p className="font-mono text-[8px] uppercase tracking-wider text-white/38 md:hidden">Random</p>
-                    <p className="hidden font-mono text-[11px] uppercase tracking-[0.26em] text-white/38 md:block">Shuffle</p>
-                    <h3 className="mt-0.5 text-[10px] font-bold text-white md:mt-3 md:text-lg">Join Random</h3>
+                  <div className="order-2 md:order-1 w-full">
+                    <p className="font-mono text-[8px] sm:text-[9px] uppercase tracking-wider text-white/40 md:hidden">Random</p>
+                    <p className="hidden font-mono text-[11px] uppercase tracking-[0.26em] text-white/40 md:block">Shuffle</p>
+                    <h3 className="mt-0.5 text-[11px] sm:text-[12px] font-bold text-white md:mt-3 md:text-lg">Join Random</h3>
                     <p className="hidden mt-2 text-sm text-slate-500 leading-relaxed md:block">Jump into a random live discussion happening now.</p>
-                    <p className="mt-1 text-[8px] text-slate-500 md:hidden">Jump in</p>
+                    <p className="mt-1 text-[8px] sm:text-[9px] text-slate-500 md:hidden line-clamp-1">Jump in</p>
                     
                     <button 
                       onClick={() => {
@@ -1474,15 +1551,15 @@ export default function VoiceRooms() {
                           setShowNoRoomsOverlay(true);
                         }
                       }}
-                      className="mt-2 w-full py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-white border border-amber-500/20 font-bold text-[8px] transition-all flex items-center justify-center gap-1.5 group/dice md:mt-6 md:py-2.5 md:rounded-xl md:text-xs"
+                      className="mt-3 w-full py-2 sm:py-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-white border border-amber-500/20 font-bold text-[9px] sm:text-[10px] transition-all flex items-center justify-center gap-1.5 group/dice md:mt-6 md:py-2.5 md:rounded-xl md:text-xs"
                     >
-                      <Dices size={10} className="group-hover/dice:rotate-180 transition-transform duration-500 md:size-14" />
+                      <Dices size={12} className="group-hover/dice:rotate-180 transition-transform duration-500 md:size-14" />
                       <span>Shuffle</span>
                     </button>
                   </div>
                   
-                  <div className="order-1 mb-1 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 md:order-2 md:mb-0 md:rounded-2xl md:p-3">
-                    <Dices className="h-3.5 w-3.5 text-amber-400 md:h-5 md:w-5" />
+                  <div className="order-1 mb-1 rounded-full border border-amber-500/20 bg-amber-500/10 p-2.5 sm:p-3 md:order-2 md:mb-0 md:rounded-2xl md:p-3">
+                    <Dices className="h-4 w-4 text-amber-400 md:h-5 md:w-5" />
                   </div>
                 </div>
               </motion.div>

@@ -319,42 +319,40 @@ export default function DebateThread() {
   const pctB = 100 - pctA;
 
   return (
-    <div className="min-h-screen bg-[#07070f] flex flex-col relative overflow-hidden">
+    <div className="h-[100dvh] bg-[#07070f] flex flex-col relative overflow-hidden">
       <div className="ambient-blob w-full h-[300px] bg-slate-600/05 top-0 left-0" />
       
       {/* Header */}
       <header className="relative z-20 border-b border-white/5 glass sticky top-0">
-        <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-4 flex-1">
-            <button onClick={() => navigate('/debate-arena')} className="p-2 hover:bg-white/5 rounded-full transition-colors">
-              <ArrowLeft size={20} className="text-slate-400" />
+        <div className="max-w-7xl mx-auto flex items-start justify-between gap-3 sm:gap-4 px-4 sm:px-6 py-2 sm:py-4">
+          <div className="flex items-start gap-2 sm:gap-4 flex-1 min-w-0">
+            <button onClick={() => navigate('/debate-arena')} className="p-1 sm:p-2 mt-0.5 sm:mt-0 hover:bg-white/5 rounded-full transition-colors shrink-0">
+              <ArrowLeft size={18} className="text-slate-400 sm:w-[20px] sm:h-[20px]" />
             </button>
-            <div className="min-w-0">
-              <h1 className="text-xl font-bold text-white truncate">{debate.title}</h1>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{debate.category}</p>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold text-white line-clamp-2 md:line-clamp-1 break-words leading-tight">{debate.title}</h1>
+              <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest mt-0.5">{debate.category}</p>
             </div>
           </div>
-          <div className="flex items-center gap-6 text-slate-400">
+          <div className="flex items-center gap-2 sm:gap-6 text-slate-400 shrink-0">
             {((debate.created_by === user?.uid) || profile?.is_admin) && debate.status !== 'closed' && (
-              <div className="flex items-center gap-2 mr-4 border-r border-white/10 pr-4">
+              <div className="flex items-center gap-1 sm:gap-2 mr-0 border-white/10 pr-0">
                 <button 
                   onClick={closeDebate}
-                  className="px-3 py-1.5 rounded-lg bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 text-[10px] font-black tracking-widest transition-all flex items-center gap-2"
+                  className="p-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 text-[10px] font-black tracking-widest transition-all flex items-center justify-center sm:gap-2"
+                  title="Close Debate"
                 >
-                  <Lock size={14} /> CLOSE
+                  <Lock size={14} /> <span className="hidden sm:inline">CLOSE</span>
                 </button>
                 <button 
                   onClick={deleteDebate}
-                  className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[10px] font-black tracking-widest transition-all flex items-center gap-2"
+                  className="p-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[10px] font-black tracking-widest transition-all flex items-center justify-center sm:gap-2 ml-2"
+                  title="Delete Debate"
                 >
-                  <Trash2 size={14} /> DELETE
+                  <Trash2 size={14} /> <span className="hidden sm:inline">DELETE</span>
                 </button>
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <Users size={16} />
-              <span className="text-sm font-bold">{debate.participantCount}</span>
-            </div>
           </div>
         </div>
 
@@ -365,9 +363,9 @@ export default function DebateThread() {
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 flex flex-col max-w-7xl mx-auto w-full px-6 py-8 overflow-hidden">
+      <main className="relative z-10 flex-1 flex flex-col max-w-7xl mx-auto w-full px-4 sm:px-6 py-3 sm:py-8 overflow-hidden">
         <motion.div 
-          className="glass border border-white/5 rounded-2xl p-6 mb-8 bg-gradient-to-r from-blue-500/05 to-red-500/05"
+          className="glass border border-white/5 rounded-xl sm:rounded-2xl p-4 sm:p-6 mb-3 sm:mb-8 bg-gradient-to-r from-blue-500/05 to-red-500/05"
           initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
         >
           <p className="text-sm text-slate-300 leading-relaxed italic opacity-80">
@@ -392,10 +390,10 @@ export default function DebateThread() {
         )}
 
         {/* Arena Grid */}
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8 min-h-0 mb-20 overflow-hidden lg:overflow-visible">
+        <div className="flex-1 grid grid-cols-1 grid-rows-2 md:grid-rows-1 md:grid-cols-2 gap-3 md:gap-8 min-h-0 mb-32 md:mb-20 overflow-hidden lg:overflow-visible">
           {/* Side A */}
           <div className="flex flex-col min-h-0">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-2 sm:mb-4">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400">
                   <Star size={16} />
@@ -431,7 +429,7 @@ export default function DebateThread() {
 
           {/* Side B */}
           <div className="flex flex-col min-h-0">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-2 sm:mb-4">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center text-red-400">
                   <Zap size={16} />
@@ -469,7 +467,7 @@ export default function DebateThread() {
 
       {/* Input Bar - Floating Style */}
       {debate.status === 'active' ? (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-3xl px-6 z-30">
+        <div className="fixed bottom-4 sm:bottom-8 left-1/2 -translate-x-1/2 w-full max-w-3xl px-4 sm:px-6 z-30">
           <div className="glass border border-white/10 rounded-2xl p-2 shadow-2xl">
             {safeMode ? (
               <div className="flex items-center justify-center p-4 gap-3 text-red-400 font-bold uppercase tracking-widest text-xs">
@@ -548,7 +546,7 @@ function ArgumentCard({ arg, color, onReport }: { arg: Argument, color: 'blue' |
   const isMe = arg.user_id === 'me'; // Just for visual demo
   return (
     <motion.div 
-      className={`p-4 rounded-xl glass border border-white/5 relative group ${color === 'blue' ? 'hover:border-blue-500/20' : 'hover:border-red-500/20'}`}
+      className={`p-3 sm:p-4 rounded-xl glass border border-white/5 relative group ${color === 'blue' ? 'hover:border-blue-500/20' : 'hover:border-red-500/20'}`}
       initial={{ opacity: 0, x: color === 'blue' ? -20 : 20 }}
       animate={{ opacity: 1, x: 0 }}
     >

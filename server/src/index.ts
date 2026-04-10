@@ -10,12 +10,26 @@ import path from 'path';
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 // Initialize Firebase Admin
-// Note: In local development, we use the FIREBASE_AUTH_EMULATOR_HOST or a service account key
 if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: process.env.VITE_FIREBASE_PROJECT_ID,
-    databaseURL: process.env.VITE_FIREBASE_DATABASE_URL
-  });
+  const serviceAccountValid = process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY;
+
+  if (serviceAccountValid) {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        // Render sometimes escapes newlines when pasting into Env Vars, this fixes it:
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+      databaseURL: process.env.VITE_FIREBASE_DATABASE_URL
+    });
+  } else {
+    // Fallback for local emulator or when GOOGLE_APPLICATION_CREDENTIALS is fundamentally set
+    admin.initializeApp({
+      projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+      databaseURL: process.env.VITE_FIREBASE_DATABASE_URL
+    });
+  }
 }
 
 import authRouter from './auth';
@@ -24,6 +38,9 @@ import { verifySession, checkRole, logAdminAction } from './middleware';
 
 const app = express();
 const port = process.env.PORT || 4000;
+
+// Trust proxies (Render, Vercel, Heroku) so rate limiting identifies the true client IP
+app.set('trust proxy', 1);
 
 // HTTPS Redirection Middleware
 if (process.env.NODE_ENV === 'production') {
@@ -53,7 +70,18 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (
+      origin.startsWith('http://localhost') || 
+      origin.startsWith('http://127.0.0.1') ||
+      origin.endsWith('.vercel.app')
+    ) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));
@@ -124,7 +152,7 @@ app.use('/admin', verifySession, checkRole(['admin', 'moderator']), logAdminActi
 // Secure ICE Servers Proxy (Proxy for Metered TURN credentials)
 app.get('/ice-servers', verifySession, async (req, res) => {
   try {
-    const domain = process.env.METERED_DOMAIN;
+    const domain = process.env.VITE_METERED_DOMAIN;
     const apiKey = process.env.METERED_API_KEY;
     
     if (!domain || !apiKey) {
